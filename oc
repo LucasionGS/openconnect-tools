@@ -4,6 +4,7 @@
 
 OC_CONFIG_DIR="$HOME/.config/oc"
 OC_CONNECTIONS_FILE="$OC_CONFIG_DIR/connections.txt"
+OC_CONNECTIONS_FILE_PRIMARY="$OC_CONFIG_DIR/primary.txt" # Used to assign a primary default for the "primary" command
 if [ ! -d "$OC_CONFIG_DIR" ]; then
     mkdir -p "$OC_CONFIG_DIR"
 fi
@@ -168,9 +169,21 @@ function connect() {
 }
 
 function disconnect() {
-    sudo pkill -f "$OC_CMD"
-    sudo pkill -f "$OC_SSO_CMD"
-    echo "Disconnected from VPN."
+    local killed=false
+    
+    if pkill -f "$OC_CMD" 2>/dev/null; then
+        killed=true
+    fi
+    
+    if pkill -f "$OC_SSO_CMD" 2>/dev/null; then
+        killed=true
+    fi
+    
+    if [ "$killed" = true ]; then
+        return 0
+    else
+        return 1
+    fi
 }
 
 function status() {
@@ -180,6 +193,43 @@ function status() {
     else
         echo "Not connected to VPN"
     fi
+}
+
+function set_primary() {
+    local name="$1"
+    
+    if [ -z "$name" ]; then
+        echo "Usage: set_primary <connection_name>"
+        exit 1
+    fi
+    
+    # Check if connection exists
+    if ! get_connection "$name" >/dev/null; then
+        echo "No connection with name '$name' found."
+        exit 1
+    fi
+    
+    # Save the primary connection name
+    echo "$name" > "$OC_CONNECTIONS_FILE_PRIMARY"
+    echo "Primary connection set to '$name'."
+}
+
+function connect_primary() {
+    if [ ! -f "$OC_CONNECTIONS_FILE_PRIMARY" ]; then
+        echo "No primary connection set. Use 'set_primary <name>' first."
+        exit 1
+    fi
+    
+    local primary_name
+    primary_name=$(cat "$OC_CONNECTIONS_FILE_PRIMARY")
+    
+    if [ -z "$primary_name" ]; then
+        echo "Primary connection file is empty."
+        exit 1
+    fi
+    
+    echo "Connecting to primary: $primary_name"
+    connect "$primary_name"
 }
 
 
@@ -200,14 +250,21 @@ case "$1" in
     connect|c)
         connect "$2"
         ;;
+    primary|p)
+        connect_primary
+        ;;
+    set-primary|sp)
+        set_primary "$2"
+        ;;
     disconnect|dc)
         disconnect
+        exit $?
         ;;
     status|s)
         status
         ;;
     *)
-        echo "Usage: $0 {add|list|remove|connect <name>|disconnect}"
+        echo "Usage: $0 {add|list|remove|connect <name>|primary|set-primary <name>|disconnect|status}"
         exit 1
         ;;
 esac
