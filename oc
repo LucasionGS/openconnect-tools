@@ -1,0 +1,213 @@
+#!/bin/bash
+# Utility for managing and connecting to Openconnect VPN servers.
+# Uses openconnect and openconnect-sso for connections.
+
+OC_CONFIG_DIR="$HOME/.config/oc"
+OC_CONNECTIONS_FILE="$OC_CONFIG_DIR/connections.txt"
+if [ ! -d "$OC_CONFIG_DIR" ]; then
+    mkdir -p "$OC_CONFIG_DIR"
+fi
+OC_SSO_CMD="openconnect-sso"
+OC_CMD="openconnect"
+TERM="kitty"
+
+
+# Requirements: openconnect, openconnect-sso
+if ! command -v $OC_CMD &> /dev/null || ! command -v $OC_SSO_CMD &> /dev/null; then
+    echo "Error: openconnect and openconnect-sso are required but not installed."
+    exit 1
+fi
+
+function add_connection() {
+    echo "Enter connection name:"
+    read -r name
+    
+    if [ -z "$name" ]; then
+        echo "Name is required."
+        exit 1
+    fi
+    
+    echo "Enter server URL:"
+    read -r server
+    
+    if [ -z "$server" ]; then
+        echo "Server is required."
+        exit 1
+    fi
+    
+    echo "Enter username (optional, press Enter to skip):"
+    read -r user
+    
+    echo "Use SSO? (y/n, default: n):"
+    read -r sso_input
+    
+    local sso="false"
+    if [[ "$sso_input" =~ ^[Yy]$ ]]; then
+        sso="true"
+    fi
+
+    if [ ! -f "$OC_CONNECTIONS_FILE" ]; then
+        touch "$OC_CONNECTIONS_FILE"
+    fi
+
+    # Check if connection already exists
+    if grep -q "^$name|" "$OC_CONNECTIONS_FILE" 2>/dev/null; then
+        echo "Connection with name '$name' already exists."
+        exit 1
+    fi
+
+    # Format: name|server|user|sso
+    echo "$name|$server|$user|$sso" >> "$OC_CONNECTIONS_FILE"
+    echo "Connection '$name' added."
+}
+
+function list_connections() {
+    if [ ! -f "$OC_CONNECTIONS_FILE" ]; then
+        echo "No connections file found at $OC_CONNECTIONS_FILE"
+        exit 1
+    fi
+    
+    if [ ! -s "$OC_CONNECTIONS_FILE" ]; then
+        echo "No connections found."
+        return
+    fi
+    
+    # Extract just the connection names (first field)
+    cut -d'|' -f1 "$OC_CONNECTIONS_FILE"
+}
+
+function remove_connection() {
+    local name="$1"
+
+    if [ -z "$name" ]; then
+        echo "Usage: remove_connection <name>"
+        exit 1
+    fi
+
+    if [ ! -f "$OC_CONNECTIONS_FILE" ]; then
+        echo "No connections file found."
+        exit 1
+    fi
+
+    # Check if connection exists
+    if ! grep -q "^$name|" "$OC_CONNECTIONS_FILE" 2>/dev/null; then
+        echo "No connection with name '$name' found."
+        exit 1
+    fi
+
+    # Remove the line with the matching connection name
+    if command -v sed &> /dev/null; then
+        sed -i "/^$name|/d" "$OC_CONNECTIONS_FILE"
+    else
+        grep -v "^$name|" "$OC_CONNECTIONS_FILE" > "${OC_CONNECTIONS_FILE}.tmp" && mv "${OC_CONNECTIONS_FILE}.tmp" "$OC_CONNECTIONS_FILE"
+    fi
+    echo "Connection '$name' removed."
+}
+
+function get_connection() {
+    local name="$1"
+
+    if [ -z "$name" ]; then
+        echo "Usage: get_connection <name>"
+        exit 1
+    fi
+
+    if [ ! -f "$OC_CONNECTIONS_FILE" ]; then
+        echo "No connections file found at $OC_CONNECTIONS_FILE"
+        exit 1
+    fi
+
+    # Find the line with the matching connection name
+    grep "^$name|" "$OC_CONNECTIONS_FILE" 2>/dev/null
+}
+
+function connect() {
+    local name="$1"
+
+    if [ -z "$name" ]; then
+        echo "Usage: connect <name>"
+        exit 1
+    fi
+
+    local connection
+    connection=$(get_connection "$name")
+    if [ -z "$connection" ]; then
+        echo "No connection with name '$name' found."
+        exit 1
+    fi
+
+    # Parse pipe-separated values: name|server|user|sso
+    local server user sso args
+    IFS='|' read -r _ server user sso <<< "$connection"
+
+    if [ -z "$server" ]; then
+        echo "Connection '$name' is missing server information."
+        exit 1
+    fi
+
+    args="--server=$server"
+
+    if [ -n "$user" ]; then
+        args="$args --user=$user"
+    fi
+
+
+    if [ "$sso" = "true" ]; then
+        echo "Connecting to $server as $user using SSO..."
+        if [[ "$DEBUG" == true ]]; then
+            $OC_SSO_CMD --server="$server" &
+        else
+            $OC_SSO_CMD --server="$server" &>/dev/null &
+        fi
+        disown $!
+        return
+    fi
+    echo "Connecting to $server as $user..."
+    $OC_CMD $args &
+    disown $!
+}
+
+function disconnect() {
+    sudo pkill -f "$OC_CMD"
+    sudo pkill -f "$OC_SSO_CMD"
+    echo "Disconnected from VPN."
+}
+
+function status() {
+    # Check tun state
+    if ip link show tun0 &>/dev/null; then
+        echo "Connected to VPN"
+    else
+        echo "Not connected to VPN"
+    fi
+}
+
+
+export QTWEBENGINE_CHROMIUM_FLAGS="--no-sandbox"
+export OPENSSL_CONF="$HOME/.openconnect/config.conf"
+
+
+case "$1" in
+    add|a)
+        add_connection
+        ;;
+    list|ls)
+        list_connections
+        ;;
+    remove|rm)
+        remove_connection "$2"
+        ;;
+    connect|c)
+        connect "$2"
+        ;;
+    disconnect|dc)
+        disconnect
+        ;;
+    status|s)
+        status
+        ;;
+    *)
+        echo "Usage: $0 {add|list|remove|connect <name>|disconnect}"
+        exit 1
+        ;;
+esac
