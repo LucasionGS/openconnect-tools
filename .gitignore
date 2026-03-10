@@ -1,0 +1,9 @@
+# AUR publish working directory
+.aur-repo/
+
+# makepkg artifacts
+src/
+pkg/
+*.tar.zst
+*.tar.gz
+*.tar.xz
