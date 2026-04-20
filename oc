@@ -234,6 +234,7 @@ function connect_primary() {
 
 export QTWEBENGINE_CHROMIUM_FLAGS="--no-sandbox"
 export OPENSSL_CONF="$HOME/.openconnect/config.conf"
+export LIBGL_ALWAYS_SOFTWARE=1
 
 
 case "$1" in
